@@ -11,11 +11,10 @@
 #endif
 
 // globals
-utility::string_t clientId = _XPLATSTR("2cc6882a-f4de-4167-97f5-4b1c3ad9b8a5");
-//utility::string_t clientSecret = _XPLATSTR("lqstpq8B54LLK8HYzs9ANpy0pYdZjEa/ZyM4LnpvN/Y=");
-utility::string_t username = _XPLATSTR("stacy@isolvtech.com");
-utility::string_t password = _XPLATSTR("GodRules100");
-utility::string_t keyVaultName = _XPLATSTR("tf-test-vault");
+utility::string_t clientId = _XPLATSTR("clientId");
+utility::string_t username = _XPLATSTR("username");
+utility::string_t password = _XPLATSTR("password");
+utility::string_t keyVaultName = _XPLATSTR("vaultname");
 utility::string_t blobContainer = _XPLATSTR("");
 bool verbose = true;
 //////////////////////////////////////////////////////////////////////////////
