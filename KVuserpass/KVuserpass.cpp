@@ -11,12 +11,17 @@
 #endif
 
 // globals
-utility::string_t clientId = _XPLATSTR("");
+utility::string_t clientId = _XPLATSTR("...");
+utility::string_t clientSecret = _XPLATSTR("");
 
-utility::string_t username = _XPLATSTR("");
-utility::string_t password = _XPLATSTR("");
-utility::string_t keyVaultName = _XPLATSTR("");
+
+utility::string_t username = _XPLATSTR("..");
+utility::string_t password = _XPLATSTR("..");
+utility::string_t keyVaultName = _XPLATSTR("...");
 utility::string_t blobContainer = _XPLATSTR("");
+utility::string_t algorithm = _XPLATSTR("RS384");
+utility::string_t string1 = _XPLATSTR("BD3FF47540B31E62D4CA6B07794E5A886B0F655FC322730F26ECD65CC7DD5C90");
+
 bool verbose = false;
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -44,14 +49,16 @@ private:
 	pplx::task<void> GetLoginUrl();
 	pplx::task<void> get_secret(utility::string_t secretName);
 	pplx::task<void> get_key(utility::string_t secretName);
+	
 	utility::string_t NewGuid();
 	utility::string_t read_response_body(web::http::http_response response);
 
 public:
-	pplx::task<void> Authenticate(utility::string_t& clientId, /*utility::string_t& clientSecret,*/
+	pplx::task<void> Authenticate(utility::string_t& clientId, utility::string_t& clientSecret,
 		utility::string_t& username, utility::string_t& password, utility::string_t& keyVaultName);
 	bool GetSecretValue(utility::string_t secretName, web::json::value& secret);
 	bool GetKeyValue(utility::string_t secretName, web::json::value& key);
+	pplx::task<void> sign(utility::string_t secretName);
 };
 //////////////////////////////////////////////////////////////////////////////
 // helper to generate a new guid (currently Linux specific, for Windows we 
@@ -122,10 +129,10 @@ pplx::task<void> KeyVaultClient::get_secret(utility::string_t secretName)
 			utility::string_t target = impl->read_response_body(response);
 			//std::wcout << target << std::endl;
 
-			
+
 			impl->secret = web::json::value::parse(target.c_str(), err);
 			//std::wcout << impl->secret << std::endl;
-			
+
 		}
 		else {
 			impl->secret = web::json::value::parse(_XPLATSTR("{\"id\":\"\",\"value\":\"\"}"), err);
@@ -166,16 +173,64 @@ pplx::task<void> KeyVaultClient::get_key(utility::string_t secretName)
 			utility::string_t target = impl->read_response_body(response);
 			//std::wcout << target << std::endl;
 
-			
-			impl-> key = web::json::value::parse(target.c_str(), err);
+
+			impl->key = web::json::value::parse(target.c_str(), err);
 			//std::wcout << impl->secret << std::endl;
-			
+
 		}
 		else {
 			impl->secret = web::json::value::parse(_XPLATSTR("{\"id\":\"\",\"value\":\"\"}"), err);
 		}
 	});
 }
+
+pplx::task<void> KeyVaultClient::sign(utility::string_t kid)
+{
+	auto impl = this;
+	// create the url path to query the keyvault key
+	utility::string_t url = kid + _XPLATSTR("/sign?api-version=2015-06-01");
+
+	//std::wcout << url << std::endl;
+	web::http::client::http_client client(url);
+
+	web::json::value postData;
+	postData[L"alg"] = web::json::value::string(algorithm);
+	postData[L"value"] = web::json::value::string(string1);
+
+	
+	
+	web::http::http_request request(web::http::methods::POST);
+	request.headers().add(_XPLATSTR("Content-Type"), _XPLATSTR("application/json"));
+	request.headers().add(_XPLATSTR("Accept"), _XPLATSTR("application/json"));
+	request.headers().add(_XPLATSTR("client-request-id"), NewGuid());
+	// add access token we got from authentication step
+	request.headers().add(_XPLATSTR("Authorization"), impl->tokenType + _XPLATSTR(" ") + impl->accessToken);
+	request.set_body(postData);
+
+	//std::wcout << request.to_string() << std::endl;
+	// response from IDP is a JWT Token that contains the token type and access token we need for
+	// Azure HTTP REST API calls
+	return client.request(request).then([impl](web::http::http_response response)
+	{
+		
+		//std::wcout << response.to_string() << std::endl;
+
+		impl->status_code = response.status_code();
+		if (impl->status_code == 200) {
+			utility::string_t target = impl->read_response_body(response);
+			std::wcout << _XPLATSTR("Signature    : ") << target << std::endl;
+			std::error_code err;
+			web::json::value jwtToken = web::json::value::parse(target.c_str(), err);
+			if (err.value() == 0) {
+				utility::string_t target = impl->read_response_body(response);
+				//std::wcout << target << std::endl;
+				//std::wcout << _XPLATSTR("SUCCESS") << std::endl;
+			}
+		}
+	});
+}
+
+
 //////////////////////////////////////////////////////////////////////////////
 // helper to parse out https url in double quotes
 utility::string_t KeyVaultClient::get_https_url(utility::string_t headerValue)
@@ -197,7 +252,7 @@ utility::string_t KeyVaultClient::get_https_url(utility::string_t headerValue)
 //////////////////////////////////////////////////////////////////////////////
 // Make a HTTP POST to oauth2 IDP source to get JWT Token containing
 // access token & token type
-pplx::task<void> KeyVaultClient::Authenticate(utility::string_t& clientId, /*utility::string_t& clientSecret,*/
+pplx::task<void> KeyVaultClient::Authenticate(utility::string_t& clientId, utility::string_t& clientSecret,
 	utility::string_t& username, utility::string_t& password, utility::string_t& keyVaultName)
 {
 	auto impl = this;
@@ -210,9 +265,10 @@ pplx::task<void> KeyVaultClient::Authenticate(utility::string_t& clientId, /*uti
 	utility::string_t url = impl->loginUrl + _XPLATSTR("/oauth2/token");
 	//std::wcout << url << std::endl;
 	web::http::client::http_client client(url);
-	utility::string_t postData = _XPLATSTR("resource=") + web::uri::encode_uri(impl->resourceUrl) + _XPLATSTR("&client_id=") + clientId /*+ _XPLATSTR("&client_secret=") + clientSecret*/
+	utility::string_t postData = _XPLATSTR("resource=") + web::uri::encode_uri(impl->resourceUrl) + _XPLATSTR("&client_id=") + clientId + _XPLATSTR("&client_secret=") + clientSecret
 		+ _XPLATSTR("&username=") + username + _XPLATSTR("&password=") + password + _XPLATSTR("&grant_type=password");
 	//std::wcout << postData << std::endl;
+	
 
 	web::http::http_request request(web::http::methods::POST);
 	request.headers().add(_XPLATSTR("Content-Type"), _XPLATSTR("application/x-www-form-urlencoded"));
@@ -221,7 +277,7 @@ pplx::task<void> KeyVaultClient::Authenticate(utility::string_t& clientId, /*uti
 	request.headers().add(_XPLATSTR("client-request-id"), NewGuid());
 	request.set_body(postData);
 
-
+	//std::wcout << request.to_string() << std::endl;
 	// response from IDP is a JWT Token that contains the token type and access token we need for
 	// Azure HTTP REST API calls
 	return client.request(request).then([impl](web::http::http_response response)
@@ -333,11 +389,10 @@ int main(int argc, char* argv[])
 	KeyVaultClient kvc;
 	utility::string_t type = argv[1];
 	utility::string_t secretName = _XPLATSTR("");
-	
-	if ( argc >= 3) {
-	secretName = argv[2];
-	//std::wcout << _XPLATSTR("with namess") << std::endl;
-	//blobName = argv[3];
+
+	if (argc >= 3) {
+		secretName = argv[2];
+		
 	}
 
 	/////////////////////////////////////////////////////////////////////////
@@ -350,7 +405,7 @@ int main(int argc, char* argv[])
 	std::wcout << _XPLATSTR("Authenticating for KeyVault:") << keyVaultName.c_str() << _XPLATSTR("...") << std::endl;
 	std::wcout << _XPLATSTR("clientId : ") << clientId.c_str() << _XPLATSTR("..") << std::endl;
 
-	kvc.Authenticate(clientId, username, password, keyVaultName).wait();
+	kvc.Authenticate(clientId, clientSecret, username, password, keyVaultName).wait();
 
 	if (verbose) {
 		std::wcout << _XPLATSTR("Azure Region: ") << kvc.keyVaultRegion.c_str() << std::endl;
@@ -363,7 +418,7 @@ int main(int argc, char* argv[])
 	//// Get Azure KeyVault secret
 	if (type == _XPLATSTR("keys"))
 	{
-		std::wcout << _XPLATSTR("Querying KeyVault Keys ") << secretName.c_str() << _XPLATSTR("...") << std::endl;
+		std::wcout << _XPLATSTR("Querying KeyVault for Keys ") << secretName.c_str() << _XPLATSTR("...") << std::endl;
 		web::json::value jsonKey;
 		bool rc = kvc.GetKeyValue(secretName, jsonKey);
 
@@ -371,17 +426,30 @@ int main(int argc, char* argv[])
 			std::wcout << _XPLATSTR("Key doesn't exist") << std::endl;
 			return 1;
 		}
-		//std::wcout << jsonSecret[_XPLATSTR("kid")] << std::endl;
-		std::wcout << jsonKey << std::endl;
-		//std::wcout << _XPLATSTR("Secret ID   : ") << (jsonSecret[_XPLATSTR("key")])[_XPLATSTR("kid")] << std::endl;
-		//std::wcout << _XPLATSTR("Secret Value: ") << (jsonSecret[_XPLATSTR("key")])[_XPLATSTR("kid")] << std::endl;
 
+		
+
+		if (argc >= 3) {
+			std::wcout << _XPLATSTR("Key ID   : ") << (jsonKey[_XPLATSTR("key")])[_XPLATSTR("kid")] << std::endl;
+			std::wcout << _XPLATSTR("Key Value   : ") << (jsonKey[_XPLATSTR("key")])[_XPLATSTR("n")] << std::endl << std::endl;
+			std::wcout << _XPLATSTR("Signing with key ....") << std::endl;
+			utility::string_t string1 = _XPLATSTR("message to be signed");
+			
+			
+			utility::string_t kid = (jsonKey[_XPLATSTR("key")])[_XPLATSTR("kid")].as_string();
+			kvc.sign(kid).wait();
+
+		}
+
+		else
+			std::wcout << _XPLATSTR("Keys  : ") << jsonKey << std::endl;
+		
 
 	}
 
 	else if (type == _XPLATSTR("secrets"))
 	{
-		std::wcout << _XPLATSTR("Querying KeyVault Secrets ") << secretName.c_str() << _XPLATSTR("...") << std::endl;
+		std::wcout << _XPLATSTR("Querying KeyVault for Secrets ") << secretName.c_str() << _XPLATSTR("...") << std::endl;
 		web::json::value jsonSecret;
 		bool rc = kvc.GetSecretValue(secretName, jsonSecret);
 
@@ -389,19 +457,21 @@ int main(int argc, char* argv[])
 			std::wcout << _XPLATSTR("Secret doesn't exist") << std::endl;
 			return 1;
 		}
-		//std::wcout << jsonSecret[_XPLATSTR("kid")] << std::endl;
-		std::wcout << jsonSecret.size() << std::endl;
-		std::wcout << _XPLATSTR("Secret ID   : ") << jsonSecret[_XPLATSTR("id")] << std::endl;
-		std::wcout << _XPLATSTR("Secret Value: ") << jsonSecret[_XPLATSTR("value")]<< std::endl;
-
+		if (argc >= 3) {
+			//std::wcout << jsonSecret[_XPLATSTR("kid")] << std::endl;
+			std::wcout << _XPLATSTR("Secret ID   : ") << jsonSecret[_XPLATSTR("id")] << std::endl;
+			std::wcout << _XPLATSTR("Secret Value: ") << jsonSecret[_XPLATSTR("value")] << std::endl;
+		}
+		else
+			std::wcout << _XPLATSTR("Secrets  : ") << jsonSecret << std::endl;
 	}
 	else {
 
 		std::wcout << _XPLATSTR("Resource doesn't exist") << std::endl;
 
 	}
-	
-	
+
+
 	return 0;
 }
 
